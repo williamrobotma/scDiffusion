@@ -40,11 +40,11 @@ def model_and_diffusion_defaults():
 
 def classifier_and_diffusion_defaults():
     res = dict(
-        input_dim = 128,
-        hidden_dim = [512,512,256,128],
+        input_dim=128,
+        hidden_dim=[512, 512, 256, 128],
         classifier_use_fp16=False,
-        dropout = 0.1,
-        num_class = 11,
+        dropout=0.1,
+        # num_class = 11,
     )
     res.update(diffusion_defaults())
     return res

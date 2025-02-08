@@ -14,7 +14,7 @@ from torch.optim import AdamW
 
 from guided_diffusion import dist_util, logger
 from guided_diffusion.fp16_util import MixedPrecisionTrainer
-from guided_diffusion.cell_datasets_loader import load_data
+from guided_diffusion.cell_datasets_loader import load_data, get_dataset, dataset_to_loader
 from guided_diffusion.resample import create_named_schedule_sampler
 from guided_diffusion.script_util import (
     add_dict_to_argparser,
@@ -35,9 +35,42 @@ def main():
     dist_util.setup_dist()
     logger.configure()
 
+    logger.log("creating data loader...")
+    dataset = get_dataset(
+        data_dir=args.data_dir,
+        vae_path=args.vae_path,
+        train_vae=False,
+        hidden_dim=args.latent_dim,
+        train_split_only=args.train_split_only,
+    )
+    num_class = np.unique(dataset.class_name).shape[0]
+    data = dataset_to_loader(
+        dataset=dataset,
+        batch_size=args["batch_size"],
+    )
+
+    # data = load_data(
+    #     data_dir=args.data_dir,
+    #     batch_size=args.batch_size,
+    #     vae_path=args.vae_path,
+    #     hidden_dim=args.latent_dim,
+    #     train_vae=False,
+    # )
+    if args.val_data_dir:
+        val_data = load_data(
+            data_dir=args.val_data_dir,
+            batch_size=args.batch_size,
+            vae_path=args.vae_path,
+            hidden_dim=args.latent_dim,
+            train_vae=False,
+        )
+    else:
+        val_data = None
+
     logger.log("creating model and diffusion...")
     model, diffusion = create_classifier_and_diffusion(
-        **args_to_dict(args, classifier_and_diffusion_defaults().keys())
+        **args_to_dict(args, classifier_and_diffusion_defaults().keys()),
+        num_class=num_class,
     )
     model.to(dist_util.dev())
     if args.noised:
@@ -73,25 +106,6 @@ def main():
         bucket_cap_mb=128,
         find_unused_parameters=True,
     )
-
-    logger.log("creating data loader...")
-    data = load_data(
-        data_dir=args.data_dir,
-        batch_size=args.batch_size,
-        vae_path=args.vae_path,
-        hidden_dim=args.latent_dim,
-        train_vae=False,
-    )
-    if args.val_data_dir:
-        val_data = load_data(
-            data_dir=args.val_data_dir,
-            batch_size=args.batch_size,
-            vae_path=args.vae_path,
-            hidden_dim=args.latent_dim,
-            train_vae=False,
-        )
-    else:
-        val_data = None
 
     logger.log(f"creating optimizer...")
     opt = AdamW(mp_trainer.master_params, lr=args.lr, weight_decay=args.weight_decay)
@@ -221,17 +235,18 @@ def create_argparser():
         log_interval=100,
         eval_interval=100,
         save_interval=100000,
-        vae_path='output/Autoencoder_checkpoint/muris_AE/model_seed=0_step=0.pt',
+        vae_path="output/Autoencoder_checkpoint/muris_AE/model_seed=0_step=0.pt",
         latent_dim=128,
-        model_path='output/classifier_checkpoint/classifier_muris',
+        model_path="output/classifier_checkpoint/classifier_muris",
         start_guide_time=500,
-        num_class=12,
+        # num_class=12,
     )
-    num_class = defaults['num_class']
+    # num_class = defaults['num_class']
     defaults.update(classifier_and_diffusion_defaults())
-    defaults['num_class']= num_class
+    # defaults['num_class']= num_class
     parser = argparse.ArgumentParser()
     add_dict_to_argparser(parser, defaults)
+    parser.add_argument("--train_split_only", action="store_true")
     return parser
 
 def setup_seed(seed):
