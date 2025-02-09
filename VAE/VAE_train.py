@@ -1,20 +1,23 @@
 import argparse
 import os
+import sys
 import time
+import random
 
 import numpy as np
 import torch
 from VAE_model import VAE
-import sys
+
 sys.path.append("..")
 # from guided_diffusion.cell_datasets import load_data
 # from guided_diffusion.cell_datasets_sapiens import load_data
 # from guided_diffusion.cell_datasets_WOT import load_data
 # from guided_diffusion.cell_datasets_muris import load_data
-from guided_diffusion.cell_datasets_loader import load_data
+# from guided_diffusion.cell_datasets_loader import load_data
+from guided_diffusion.cell_datasets_loader import dataset_to_loader, get_dataset
 
 torch.autograd.set_detect_anomaly(True)
-import random
+
 
 def seed_everything(seed):
     random.seed(seed)
@@ -31,19 +34,24 @@ def prepare_vae(args, state_dict=None):
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    datasets = load_data(
+    dataset = get_dataset(
         data_dir=args["data_dir"],
-        batch_size=args["batch_size"],
         train_vae=True,
+        train_split_only=args["train_split_only"],
+    )
+    num_genes = dataset[0][0].shape[0]
+    datasets = dataset_to_loader(
+        dataset=dataset,
+        batch_size=args["batch_size"],
     )
 
     autoencoder = VAE(
-        num_genes=args["num_genes"],
+        num_genes,
         device=device,
         seed=args["seed"],
         loss_ae=args["loss_ae"],
         hidden_dim=128,
-        decoder_activation=args["decoder_activation"],
+        decoder_activation=args["decoder_activation"],  # DOESN'T DO ANYTHING
     )
     if state_dict is not None:
         print('loading pretrained model from: \n',state_dict)
@@ -121,12 +129,14 @@ def parse_arguments():
     # dataset arguments
     parser.add_argument("--data_dir", type=str, default='/data1/lep/Workspace/guided-diffusion/data/tabula_muris/all.h5ad')
     parser.add_argument("--loss_ae", type=str, default="mse")
-    parser.add_argument("--decoder_activation", type=str, default="ReLU")
+    parser.add_argument(
+        "--decoder_activation", type=str, default="ReLU", help="DOESN'T DO ANYTHING"
+    )
 
-    # AE arguments                                             
+    # AE arguments
     parser.add_argument("--local_rank", type=int, default=0)  
     parser.add_argument("--split_seed", type=int, default=1234)
-    parser.add_argument("--num_genes", type=int, default=18996)
+    # parser.add_argument("--num_genes", type=int, default=18996)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--hparams", type=str, default="")
 
@@ -140,6 +150,7 @@ def parse_arguments():
 
     parser.add_argument("--save_dir", type=str, default='../output/ae_checkpoint/muris_AE')
     parser.add_argument("--sweep_seeds", type=int, default=200)
+    parser.add_argument("--train_split_only", action="store_true")
     return dict(vars(parser.parse_args()))
 
 

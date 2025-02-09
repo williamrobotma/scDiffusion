@@ -44,6 +44,7 @@ def load_data(
     deterministic=False,
     train_vae=False,
     hidden_dim=128,
+    train_split_only=False,
 ):
     """
     For a dataset, create a generator over (cells, kwargs) pairs.
@@ -55,19 +56,69 @@ def load_data(
     :param train_vae: train the autoencoder or use the autoencoder.
     :param hidden_dim: the dimensions of latent space. If use pretrained weight, set 128
     """
+    dataset = get_dataset(
+        data_dir=data_dir,
+        vae_path=vae_path,
+        train_vae=train_vae,
+        hidden_dim=hidden_dim,
+        train_split_only=train_split_only,
+    )
+    return dataset_to_loader(dataset=dataset, batch_size=batch_size, deterministic=deterministic)
+
+
+def dataset_to_loader(*, dataset, batch_size, deterministic=False):
+    """
+    Create a generator over (cells, kwargs) pairs from a CellDataset.
+
+    :param dataset: a CellDataset.
+    :param batch_size: the batch size of each returned pair.
+    :param deterministic: if True, yield results in a deterministic order.
+    """
+    if deterministic:
+        loader = DataLoader(
+            dataset, batch_size=batch_size, shuffle=False, num_workers=1, drop_last=True
+        )
+    else:
+        loader = DataLoader(
+            dataset, batch_size=batch_size, shuffle=True, num_workers=1, drop_last=True
+        )
+    while True:
+        yield from loader
+
+
+def get_dataset(
+    *,
+    data_dir,
+    vae_path=None,
+    train_vae=False,
+    hidden_dim=128,
+    train_split_only=False,
+):
+    """
+    Get CellDataset.
+
+    :param data_dir: a dataset directory.
+    :param vae_path: the path to save autoencoder / read autoencoder checkpoint.
+    :param train_vae: train the autoencoder or use the autoencoder.
+    :param hidden_dim: the dimensions of latent space. If use pretrained weight, set 128
+    """
+
     if not data_dir:
         raise ValueError("unspecified data directory")
 
     adata = sc.read_h5ad(data_dir)
-    
+
     # preporcess the data. modify this part if use your own dataset. the gene expression must first norm1e4 then log1p
     sc.pp.filter_genes(adata, min_cells=3)
     sc.pp.filter_cells(adata, min_genes=10)
     adata.var_names_make_unique()
 
+    if train_split_only:
+        adata = adata[adata.obs["split"] == "train"]
+
     # if generate ood data, left this as the ood data
-    # selected_cells = (adata.obs['organ'] != 'mammary') | (adata.obs['celltype'] != 'B cell')  
-    # adata = adata[selected_cells, :]  
+    # selected_cells = (adata.obs['organ'] != 'mammary') | (adata.obs['celltype'] != 'B cell')
+    # adata = adata[selected_cells, :]
 
     classes = adata.obs['celltype'].values
     label_encoder = LabelEncoder()
@@ -86,21 +137,13 @@ def load_data(
         autoencoder = load_VAE(vae_path,num_gene,hidden_dim)
         cell_data = autoencoder(torch.tensor(cell_data).cuda(),return_latent=True)
         cell_data = cell_data.cpu().detach().numpy()
-    
+
     dataset = CellDataset(
         cell_data,
         classes
     )
-    if deterministic:
-        loader = DataLoader(
-            dataset, batch_size=batch_size, shuffle=False, num_workers=1, drop_last=True
-        )
-    else:
-        loader = DataLoader(
-            dataset, batch_size=batch_size, shuffle=True, num_workers=1, drop_last=True
-        )
-    while True:
-        yield from loader
+
+    return dataset
 
 
 class CellDataset(Dataset):
@@ -122,4 +165,3 @@ class CellDataset(Dataset):
         if self.class_name is not None:
             out_dict["y"] = np.array(self.class_name[idx], dtype=np.int64)
         return arr, out_dict
-
