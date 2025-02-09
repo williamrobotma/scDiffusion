@@ -53,6 +53,7 @@ def load_data(
     hidden_dim=128,
     train_split_only=False,
     num_workers=1,
+    device=None,
 ):
     """
     For a dataset, create a generator over (cells, kwargs) pairs.
@@ -70,6 +71,7 @@ def load_data(
         train_vae=train_vae,
         hidden_dim=hidden_dim,
         train_split_only=train_split_only,
+        device=device,
     )
     return dataset_to_loader(
         dataset=dataset, batch_size=batch_size, deterministic=deterministic, num_workers=num_workers
@@ -103,6 +105,7 @@ def get_dataset(
     train_vae=False,
     hidden_dim=128,
     train_split_only=False,
+    device=None,
 ):
     """
     Get CellDataset.
@@ -142,7 +145,8 @@ def get_dataset(
     cell_data = adata.X.toarray()
 
     # turn the gene expression into latent space. use this if training the diffusion backbone.
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    if not device:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
     if not train_vae:
         num_gene = cell_data.shape[1]
         with th.no_grad():
