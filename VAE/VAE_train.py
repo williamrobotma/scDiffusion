@@ -43,6 +43,7 @@ def prepare_vae(args, state_dict=None):
     datasets = dataset_to_loader(
         dataset=dataset,
         batch_size=args["batch_size"],
+        num_workers=args["num_workers"],
     )
 
     autoencoder = VAE(
@@ -151,6 +152,7 @@ def parse_arguments():
     parser.add_argument("--save_dir", type=str, default='../output/ae_checkpoint/muris_AE')
     parser.add_argument("--sweep_seeds", type=int, default=200)
     parser.add_argument("--train_split_only", action="store_true")
+    parser.add_argument("--num_workers", type=int, default=1)
     return dict(vars(parser.parse_args()))
 
 
