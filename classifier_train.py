@@ -35,6 +35,10 @@ def main():
     dist_util.setup_dist()
     logger.configure()
 
+    if not args.device_ids:
+        device_ids = [dist_util.dev()]
+    else:
+        device_ids = [th.device(device_id) for device_id in args.device_ids]
     logger.log("creating data loader...")
     dataset = get_dataset(
         data_dir=args.data_dir,
@@ -42,6 +46,7 @@ def main():
         train_vae=False,
         hidden_dim=args.latent_dim,
         train_split_only=args.train_split_only,
+        device=device_ids[0],
     )
     num_class = np.unique(dataset.class_name).shape[0]
     data = dataset_to_loader(
@@ -74,7 +79,8 @@ def main():
         **args_to_dict(args, classifier_and_diffusion_defaults().keys()),
         num_class=num_class,
     )
-    model.to(dist_util.dev())
+    device = device_ids[0]
+    model.to(device)
     if args.noised:
         schedule_sampler = create_named_schedule_sampler(
             args.schedule_sampler, diffusion
@@ -88,9 +94,7 @@ def main():
                 f"loading model from checkpoint: {args.resume_checkpoint}... at {resume_step} step"
             )
             model.load_state_dict(
-                dist_util.load_state_dict(
-                    args.resume_checkpoint, map_location=dist_util.dev()
-                )
+                dist_util.load_state_dict(args.resume_checkpoint, map_location=device)
             )
 
     # Needed for creating correct EMAs and fp16 parameters.
@@ -102,8 +106,8 @@ def main():
 
     model = DDP(
         model,
-        device_ids=[dist_util.dev()],
-        output_device=dist_util.dev(),
+        device_ids=device_ids,
+        output_device=device,
         broadcast_buffers=False,
         bucket_cap_mb=128,
         find_unused_parameters=True,
@@ -116,9 +120,7 @@ def main():
             bf.dirname(args.resume_checkpoint), f"opt{resume_step:06}.pt"
         )
         logger.log(f"loading optimizer state from checkpoint: {opt_checkpoint}")
-        opt.load_state_dict(
-            dist_util.load_state_dict(opt_checkpoint, map_location=dist_util.dev())
-        )
+        opt.load_state_dict(dist_util.load_state_dict(opt_checkpoint, map_location=device))
 
     logger.log("training classifier model...")
 
@@ -126,7 +128,9 @@ def main():
 
         def noise_and_t(batch):
             t, _ = schedule_sampler.sample(
-                batch.shape[0], dist_util.dev(), start_guide_time=args.start_guide_time
+                batch.shape[0],
+                device=device,
+                start_guide_time=args.start_guide_time,
             )
             batch = diffusion.q_sample(batch, t)
             return batch, t
@@ -134,13 +138,13 @@ def main():
     else:
 
         def noise_and_t(batch):
-            return batch, th.zeros(batch.shape[0], dtype=th.long, device=dist_util.dev())
+            return batch, th.zeros(batch.shape[0], dtype=th.long, device=device)
 
     def forward_backward_log(data_loader, prefix="train"):
         batch, extra = next(data_loader)
-        labels = extra["y"].to(dist_util.dev(), non_blocking=True)
+        labels = extra["y"].to(device, non_blocking=True)
 
-        batch = batch.to(dist_util.dev(), non_blocking=True)
+        batch = batch.to(device, non_blocking=True)
         # Noisy cells
         batch, t = noise_and_t(batch)
 

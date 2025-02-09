@@ -30,7 +30,8 @@ def main():
     model, diffusion = create_model_and_diffusion(
         **args_to_dict(args, model_and_diffusion_defaults().keys())
     )
-    model.to(args.device_ids[0] if args.device_ids else dist_util.dev())
+    device = args.device_ids[0] if args.device_ids else dist_util.dev()
+    model.to(device)
     schedule_sampler = create_named_schedule_sampler(args.schedule_sampler, diffusion)
 
     logger.log("creating data loader...")
@@ -39,6 +40,8 @@ def main():
         batch_size=args.batch_size,
         vae_path=args.vae_path,
         train_vae=False,
+        device=device,
+        train_split_only=args.train_split_only,
     )
 
     logger.log("training...")
@@ -88,6 +91,7 @@ def create_argparser():
     add_dict_to_argparser(parser, defaults)
 
     parser.add_argument("--device_ids", nargs="*", default=None)
+    parser.add_argument("--train_split_only", action="store_true")
     return parser
 
 
