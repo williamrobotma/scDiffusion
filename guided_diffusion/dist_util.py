@@ -5,6 +5,7 @@ Helpers for distributed training.
 import io
 import os
 import socket
+import warnings
 
 import blobfile as bf
 from mpi4py import MPI
@@ -24,7 +25,7 @@ def setup_dist():
     """
     if dist.is_initialized():
         return
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+    # os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
     comm = MPI.COMM_WORLD
     backend = "gloo" if not th.cuda.is_available() else "nccl"
@@ -33,13 +34,31 @@ def setup_dist():
         hostname = "localhost"
     else:
         hostname = socket.gethostbyname(socket.getfqdn())
+        # hostname = socket.getfqdn()
+
     os.environ["MASTER_ADDR"] = comm.bcast(hostname, root=0)
+    # os.environ["MASTER_ADDR"] = "127.0.1.1"
     os.environ["RANK"] = str(comm.rank)
     os.environ["WORLD_SIZE"] = str(comm.size)
 
     port = comm.bcast(_find_free_port(), root=0)
     os.environ["MASTER_PORT"] = str(port)
-    dist.init_process_group(backend=backend, init_method="env://")
+
+    try:
+        dist.init_process_group(backend=backend, init_method="env://")
+    except RuntimeError as e:
+        warnings.warn(f"Failed to initialize process group: {e}", RuntimeWarning)
+        print("Trying to directly read hosts file")
+        hostname = socket.getfqdn()
+        with open("/etc/hosts", "r") as f:
+            for line in f:
+                v, k = line.split()[:2]
+                if k == hostname:
+                    os.environ["MASTER_ADDR"] = comm.bcast(v, root=0)
+                    break
+        port = comm.bcast(_find_free_port(), root=0)
+        os.environ["MASTER_PORT"] = str(port)
+        dist.init_process_group(backend=backend, init_method="env://")
 
 
 def dev():
