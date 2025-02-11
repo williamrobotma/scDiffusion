@@ -4,11 +4,14 @@ process towards more realistic images.
 """
 
 import argparse
+import sys
 
 import numpy as np
 import torch as th
 import torch.distributed as dist
 import torch.nn.functional as F
+import scanpy as sc
+import torch
 
 from guided_diffusion import dist_util, logger
 from guided_diffusion.script_util import (   
@@ -20,20 +23,27 @@ from guided_diffusion.script_util import (
     add_dict_to_argparser,
     args_to_dict,
 )
-import scanpy as sc
-import torch
+
 from VAE.VAE_model import VAE
 
-def load_VAE(ae_dir, num_gene):
+
+def test_argparser():
+    print(sys.argv)
+    args = create_argparser().parse_args()
+    print(args)
+
+
+def load_VAE(ae_dir, num_gene, device="cuda"):
     autoencoder = VAE(
         num_genes=num_gene,
-        device='cuda',
+        device=device,
         seed=0,
         hidden_dim=128,
-        decoder_activation='ReLU',
+        decoder_activation="ReLU",
     )
     autoencoder.load_state_dict(torch.load(ae_dir))
     return autoencoder
+
 
 def save_data(all_cells, traj, data_dir):
     cell_gen = all_cells
@@ -53,7 +63,13 @@ def main(cell_type=[0], multi=False, inter=False, weight=[10,10]):
     model.load_state_dict(
         dist_util.load_state_dict(args.model_path, map_location="cpu")
     )
-    model.to(dist_util.dev())
+    if not args.device_ids:
+        device_ids = [dist_util.dev()]
+    else:
+        device_ids = [th.device(device_id) for device_id in args.device_ids]
+
+    device = device_ids[0]
+    model.to(device)
     model.eval()
 
     logger.log("loading classifier...")
@@ -63,7 +79,7 @@ def main(cell_type=[0], multi=False, inter=False, weight=[10,10]):
         classifier1.load_state_dict(
             dist_util.load_state_dict(args.classifier_path1, map_location="cpu")
         )
-        classifier1.to(dist_util.dev())
+        classifier1.to(device)
         classifier1.eval()
 
         args.num_class = args.num_class2 # how many classes in this condition
@@ -71,7 +87,7 @@ def main(cell_type=[0], multi=False, inter=False, weight=[10,10]):
         classifier2.load_state_dict(
             dist_util.load_state_dict(args.classifier_path2, map_location="cpu")
         )
-        classifier2.to(dist_util.dev())
+        classifier2.to(device)
         classifier2.eval()
 
     else:
@@ -79,7 +95,7 @@ def main(cell_type=[0], multi=False, inter=False, weight=[10,10]):
         classifier.load_state_dict(
             dist_util.load_state_dict(args.classifier_path, map_location="cpu")
         )
-        classifier.to(dist_util.dev())
+        classifier.to(device)
         classifier.eval()
 
     '''
@@ -89,14 +105,14 @@ def main(cell_type=[0], multi=False, inter=False, weight=[10,10]):
         assert y is not None
         y1 = y[:,0]
         y2 = y[:,1]
-        # xt = diffusion.q_sample(th.tensor(init,device=dist_util.dev()),t*th.ones(init.shape[0],device=dist_util.dev(),dtype=torch.long),)
+        # xt = diffusion.q_sample(th.tensor(init,device=device),t*th.ones(init.shape[0],device=device,dtype=torch.long),)
         with th.enable_grad():
             x_in = x.detach().requires_grad_(True)
             logits = classifier(x_in, t)
             log_probs = F.log_softmax(logits, dim=-1)
             selected1 = log_probs[range(len(logits)), y1.view(-1)]
             selected2 = log_probs[range(len(logits)), y2.view(-1)]
-            
+
             grad1 = th.autograd.grad(selected1.sum(), x_in, retain_graph=True)[0] * args.classifier_scale1
             grad2 = th.autograd.grad(selected2.sum(), x_in, retain_graph=True)[0] * args.classifier_scale2
 
@@ -122,10 +138,10 @@ def main(cell_type=[0], multi=False, inter=False, weight=[10,10]):
             logits2 = classifier2(x_in, t)
             log_probs2 = F.log_softmax(logits2, dim=-1)
             selected2 = log_probs2[range(len(logits2)), y2.view(-1)]
-            
+
             grad1 = th.autograd.grad(selected1.sum(), x_in, retain_graph=True)[0] * args.classifier_scale1
             grad2 = th.autograd.grad(selected2.sum(), x_in, retain_graph=True)[0] * args.classifier_scale2
-            
+
             return grad1+grad2
 
     '''
@@ -140,14 +156,14 @@ def main(cell_type=[0], multi=False, inter=False, weight=[10,10]):
             selected = log_probs[range(len(logits)), y.view(-1)]
             grad = th.autograd.grad(selected.sum(), x_in, retain_graph=True)[0] * args.classifier_scale
             return grad
-        
+
     def model_fn(x, t, y=None, init=None, diffusion=None):
         assert y is not None
         if args.class_cond:
             return model(x, t, y if args.class_cond else None)
         else:
             return model(x, t)
-        
+
     if inter:
         # input real cell expression data as initial noise
         ori_adata = sc.read_h5ad(args.init_cell_path)
@@ -161,17 +177,17 @@ def main(cell_type=[0], multi=False, inter=False, weight=[10,10]):
         model_kwargs = {}
 
         if not multi and not inter:
-            classes = (cell_type[0])*th.ones((args.batch_size,), device=dist_util.dev(), dtype=th.long)
+            classes = (cell_type[0]) * th.ones((args.batch_size,), device=device, dtype=th.long)
 
         if multi:
-            classes1 = (cell_type[0])*th.ones((args.batch_size,), device=dist_util.dev(), dtype=th.long)
-            classes2 = (cell_type[1])*th.ones((args.batch_size,), device=dist_util.dev(), dtype=th.long)
+            classes1 = (cell_type[0]) * th.ones((args.batch_size,), device=device, dtype=th.long)
+            classes2 = (cell_type[1]) * th.ones((args.batch_size,), device=device, dtype=th.long)
             # classes3 = ... if more conditions
             classes = th.stack((classes1,classes2), dim=1)
 
         if inter:
-            classes1 = (cell_type[0])*th.ones((args.batch_size,), device=dist_util.dev(), dtype=th.long)
-            classes2 = (cell_type[1])*th.ones((args.batch_size,), device=dist_util.dev(), dtype=th.long)
+            classes1 = (cell_type[0]) * th.ones((args.batch_size,), device=device, dtype=th.long)
+            classes2 = (cell_type[1]) * th.ones((args.batch_size,), device=device, dtype=th.long)
             classes = th.stack((classes1,classes2), dim=1)
 
         model_kwargs["y"] = classes
@@ -185,7 +201,12 @@ def main(cell_type=[0], multi=False, inter=False, weight=[10,10]):
 
             start_x = adata.X
             autoencoder = load_VAE(args.ae_dir, args.num_gene)
-            start_x = autoencoder(torch.tensor(start_x,device=dist_util.dev()),return_latent=True).detach().cpu().numpy()
+            start_x = (
+                autoencoder(torch.tensor(start_x, device=device), return_latent=True)
+                .detach()
+                .cpu()
+                .numpy()
+            )
 
             n, m = start_x.shape  
             if n >= args.batch_size:  
@@ -194,8 +215,11 @@ def main(cell_type=[0], multi=False, inter=False, weight=[10,10]):
                 repeat_times = args.batch_size // n  
                 remainder = args.batch_size % n  
                 start_x = np.concatenate([start_x] * repeat_times + [start_x[:remainder, :]], axis=0)  
-            
-            noise = diffusion.q_sample(th.tensor(start_x,device=dist_util.dev()),args.init_time*th.ones(start_x.shape[0],device=dist_util.dev(),dtype=torch.long),)
+
+            noise = diffusion.q_sample(
+                th.tensor(start_x, device=device),
+                args.init_time * th.ones(start_x.shape[0], device=device, dtype=torch.long),
+            )
             model_kwargs["init"] = start_x
             model_kwargs["diffusion"] = diffusion
 
@@ -206,8 +230,8 @@ def main(cell_type=[0], multi=False, inter=False, weight=[10,10]):
                 clip_denoised=args.clip_denoised,
                 model_kwargs=model_kwargs,
                 cond_fn=cond_fn_multi,
-                device=dist_util.dev(),
-                noise = None,
+                device=device,
+                noise=None,
                 start_time=diffusion.betas.shape[0],
                 start_guide_steps=args.start_guide_steps,
             )
@@ -218,8 +242,8 @@ def main(cell_type=[0], multi=False, inter=False, weight=[10,10]):
                 clip_denoised=args.clip_denoised,
                 model_kwargs=model_kwargs,
                 cond_fn=cond_fn_inter,
-                device=dist_util.dev(),
-                noise = noise,
+                device=device,
+                noise=noise,
                 start_time=diffusion.betas.shape[0],
                 start_guide_steps=args.start_guide_steps,
             )
@@ -230,8 +254,8 @@ def main(cell_type=[0], multi=False, inter=False, weight=[10,10]):
                 clip_denoised=args.clip_denoised,
                 model_kwargs=model_kwargs,
                 cond_fn=cond_fn_ori,
-                device=dist_util.dev(),
-                noise = None,
+                device=device,
+                noise=None,
             )
 
         gathered_samples = [th.zeros_like(sample) for _ in range(dist.get_world_size())]
@@ -317,6 +341,8 @@ def create_argparser(celltype=[0], weight=[10,10]):
     defaults['num_class']=12
     parser = argparse.ArgumentParser()
     add_dict_to_argparser(parser, defaults)
+    parser.add_argument("--device_ids", nargs="*", default=None)
+
     return parser
 
 

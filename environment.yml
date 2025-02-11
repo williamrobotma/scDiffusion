@@ -1,8 +1,8 @@
 name: scdiffusion
 channels:
-  - conda-forge
-  - nvidia
   - pytorch
+  - nvidia
+  - conda-forge
   - bioconda
 dependencies:
   - _libgcc_mutex=0.1

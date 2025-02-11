@@ -20,6 +20,7 @@ INITIAL_LOG_LOSS_SCALE = 20.0
 
 
 class TrainLoop:
+
     def __init__(
         self,
         *,
@@ -40,6 +41,7 @@ class TrainLoop:
         lr_anneal_steps=0,
         model_name,
         save_dir,
+        device_ids=None,
     ):
         self.model = model
         self.diffusion = diffusion
@@ -90,12 +92,17 @@ class TrainLoop:
                 for _ in range(len(self.ema_rate))
             ]
 
+        if not device_ids:
+            self.device_ids = [dist_util.dev()]
+        else:
+            self.device_ids = [th.device(device_id) for device_id in device_ids]
+
         if th.cuda.is_available():
             self.use_ddp = True
             self.ddp_model = DDP(
                 self.model,
-                device_ids=[dist_util.dev()],
-                output_device=dist_util.dev(),
+                device_ids=self.device_ids,
+                output_device=self.device_ids[0],
                 broadcast_buffers=False,
                 bucket_cap_mb=128,
                 find_unused_parameters=False,
@@ -119,9 +126,7 @@ class TrainLoop:
             if dist.get_rank() == 0:
                 logger.log(f"loading model from checkpoint: {resume_checkpoint}...")
                 self.model.load_state_dict(
-                    dist_util.load_state_dict(
-                        resume_checkpoint, map_location=dist_util.dev()
-                    )
+                    dist_util.load_state_dict(resume_checkpoint, map_location=self.device_ids[0])
                 )
 
         dist_util.sync_params(self.model.parameters())
@@ -135,7 +140,7 @@ class TrainLoop:
             if dist.get_rank() == 0:
                 logger.log(f"loading EMA from checkpoint: {ema_checkpoint}...")
                 state_dict = dist_util.load_state_dict(
-                    ema_checkpoint, map_location=dist_util.dev()
+                    ema_checkpoint, map_location=self.device_ids[0]
                 )
                 ema_params = self.mp_trainer.state_dict_to_master_params(state_dict)
 
@@ -149,9 +154,7 @@ class TrainLoop:
         )
         if bf.exists(opt_checkpoint):
             logger.log(f"loading optimizer state from checkpoint: {opt_checkpoint}")
-            state_dict = dist_util.load_state_dict(
-                opt_checkpoint, map_location=dist_util.dev()
-            )
+            state_dict = dist_util.load_state_dict(opt_checkpoint, map_location=self.device_ids[0])
             self.opt.load_state_dict(state_dict)
 
     def run_loop(self):
@@ -184,13 +187,12 @@ class TrainLoop:
     def forward_backward(self, batch, cond):
         self.mp_trainer.zero_grad()
         for i in range(0, batch.shape[0], self.microbatch):
-            micro = batch[i : i + self.microbatch].to(dist_util.dev())
+            micro = batch[i : i + self.microbatch].to(self.device_ids[0])
             micro_cond = {
-                k: v[i : i + self.microbatch].to(dist_util.dev())
-                for k, v in cond.items()
+                k: v[i : i + self.microbatch].to(self.device_ids[0]) for k, v in cond.items()
             }
             last_batch = (i + self.microbatch) >= batch.shape[0]
-            t, weights = self.schedule_sampler.sample(micro.shape[0], dist_util.dev())
+            t, weights = self.schedule_sampler.sample(micro.shape[0], self.device_ids[0])
 
             compute_losses = functools.partial(
                 self.diffusion.training_losses,

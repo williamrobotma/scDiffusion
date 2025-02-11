@@ -35,6 +35,10 @@ def main():
     dist_util.setup_dist()
     logger.configure()
 
+    if not args.device_ids:
+        device_ids = [dist_util.dev()]
+    else:
+        device_ids = [th.device(device_id) for device_id in args.device_ids]
     logger.log("creating data loader...")
     dataset = get_dataset(
         data_dir=args.data_dir,
@@ -42,11 +46,13 @@ def main():
         train_vae=False,
         hidden_dim=args.latent_dim,
         train_split_only=args.train_split_only,
+        device=device_ids[0],
     )
     num_class = np.unique(dataset.class_name).shape[0]
     data = dataset_to_loader(
         dataset=dataset,
-        batch_size=args["batch_size"],
+        batch_size=args.batch_size,
+        num_workers=args.num_workers,
     )
 
     # data = load_data(
@@ -63,6 +69,7 @@ def main():
             vae_path=args.vae_path,
             hidden_dim=args.latent_dim,
             train_vae=False,
+            num_workers=args.num_workers,
         )
     else:
         val_data = None
@@ -72,7 +79,8 @@ def main():
         **args_to_dict(args, classifier_and_diffusion_defaults().keys()),
         num_class=num_class,
     )
-    model.to(dist_util.dev())
+    device = device_ids[0]
+    model.to(device)
     if args.noised:
         schedule_sampler = create_named_schedule_sampler(
             args.schedule_sampler, diffusion
@@ -86,9 +94,7 @@ def main():
                 f"loading model from checkpoint: {args.resume_checkpoint}... at {resume_step} step"
             )
             model.load_state_dict(
-                dist_util.load_state_dict(
-                    args.resume_checkpoint, map_location=dist_util.dev()
-                )
+                dist_util.load_state_dict(args.resume_checkpoint, map_location=device)
             )
 
     # Needed for creating correct EMAs and fp16 parameters.
@@ -100,8 +106,8 @@ def main():
 
     model = DDP(
         model,
-        device_ids=[dist_util.dev()],
-        output_device=dist_util.dev(),
+        device_ids=device_ids,
+        output_device=device,
         broadcast_buffers=False,
         bucket_cap_mb=128,
         find_unused_parameters=True,
@@ -114,43 +120,56 @@ def main():
             bf.dirname(args.resume_checkpoint), f"opt{resume_step:06}.pt"
         )
         logger.log(f"loading optimizer state from checkpoint: {opt_checkpoint}")
-        opt.load_state_dict(
-            dist_util.load_state_dict(opt_checkpoint, map_location=dist_util.dev())
-        )
+        opt.load_state_dict(dist_util.load_state_dict(opt_checkpoint, map_location=device))
 
     logger.log("training classifier model...")
 
+    if args.noised:
+
+        def noise_and_t(batch):
+            t, _ = schedule_sampler.sample(
+                batch.shape[0],
+                device=device,
+                start_guide_time=args.start_guide_time,
+            )
+            batch = diffusion.q_sample(batch, t)
+            return batch, t
+
+    else:
+
+        def noise_and_t(batch):
+            return batch, th.zeros(batch.shape[0], dtype=th.long, device=device)
+
     def forward_backward_log(data_loader, prefix="train"):
         batch, extra = next(data_loader)
-        labels = extra["y"].to(dist_util.dev())
+        labels = extra["y"].to(device, non_blocking=True)
 
-        batch = batch.to(dist_util.dev())
+        batch = batch.to(device, non_blocking=True)
         # Noisy cells
-        if args.noised:
-            t, _ = schedule_sampler.sample(batch.shape[0], dist_util.dev(), start_guide_time=args.start_guide_time)
-            batch = diffusion.q_sample(batch, t)
-        else:
-            t = th.zeros(batch.shape[0], dtype=th.long, device=dist_util.dev())
+        batch, t = noise_and_t(batch)
 
+        mp_trainer.zero_grad()
         for i, (sub_batch, sub_labels, sub_t) in enumerate(
             split_microbatches(args.microbatch, batch, labels, t)
         ):
             logits = model(sub_batch, sub_t)
             loss = F.cross_entropy(logits, sub_labels, reduction="none")
 
-            losses = {}
-            losses[f"{prefix}_loss"] = loss.detach()
-            losses[f"{prefix}_acc@1"] = compute_top_k(
-                logits, sub_labels, k=1, reduction="none"
-            )
+            with th.no_grad():
+                losses = {}
+                losses[f"{prefix}_loss"] = loss.detach()
+                losses[f"{prefix}_acc@1"] = compute_top_k(logits, sub_labels, k=1, reduction="none")
 
-            log_loss_dict(diffusion, sub_t, losses)
-            del losses
+                log_loss_dict(diffusion, sub_t, losses)
+                del losses
             loss = loss.mean()
             if loss.requires_grad:
-                if i == 0:
-                    mp_trainer.zero_grad()
                 mp_trainer.backward(loss * len(sub_batch) / len(batch))
+
+    if args.anneal_lr:
+        lr_setter = set_annealed_lr
+    else:
+        lr_setter = set_dummy_lr
 
     model_path = args.model_path
     for step in range(args.iterations - resume_step):
@@ -159,8 +178,7 @@ def main():
             "samples",
             (step + resume_step + 1) * args.batch_size * dist.get_world_size(),
         )
-        if args.anneal_lr:
-            set_annealed_lr(opt, args.lr, (step + resume_step) / args.iterations)
+        lr_setter(opt, args.lr, (step + resume_step) / args.iterations)
         forward_backward_log(data)
         mp_trainer.optimize(opt)
         if val_data is not None and not step % args.eval_interval:
@@ -189,6 +207,10 @@ def set_annealed_lr(opt, base_lr, frac_done):
     lr = base_lr * (1 - frac_done)
     for param_group in opt.param_groups:
         param_group["lr"] = lr
+
+
+def set_dummy_lr(opt, base_lr, frac_done):
+    return
 
 
 def save_model(mp_trainer, opt, step, model_path):
@@ -239,6 +261,7 @@ def create_argparser():
         latent_dim=128,
         model_path="output/classifier_checkpoint/classifier_muris",
         start_guide_time=500,
+        num_workers=1,
         # num_class=12,
     )
     # num_class = defaults['num_class']
@@ -246,7 +269,9 @@ def create_argparser():
     # defaults['num_class']= num_class
     parser = argparse.ArgumentParser()
     add_dict_to_argparser(parser, defaults)
+
     parser.add_argument("--train_split_only", action="store_true")
+    parser.add_argument("--device_ids", nargs="*", default=None)
     return parser
 
 def setup_seed(seed):

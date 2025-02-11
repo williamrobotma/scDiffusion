@@ -4,33 +4,40 @@ import random
 from PIL import Image
 import blobfile as bf
 import numpy as np
+import torch as th
 from torch.utils.data import DataLoader, Dataset
 
 import scanpy as sc
 import torch
 import sys
-sys.path.append('..')
+
+sys.path.append("..")
 from VAE.VAE_model import VAE
 from sklearn.preprocessing import LabelEncoder
 
+
 def stabilize(expression_matrix):
-    ''' Use Anscombes approximation to variance stabilize Negative Binomial data
+    """Use Anscombes approximation to variance stabilize Negative Binomial data
     See https://f1000research.com/posters/4-1041 for motivation.
     Assumes columns are samples, and rows are genes
-    '''
+    """
     from scipy import optimize
-    phi_hat, _ = optimize.curve_fit(lambda mu, phi: mu + phi * mu ** 2, expression_matrix.mean(1), expression_matrix.var(1))
 
-    return np.log(expression_matrix + 1. / (2 * phi_hat[0]))
+    phi_hat, _ = optimize.curve_fit(
+        lambda mu, phi: mu + phi * mu**2, expression_matrix.mean(1), expression_matrix.var(1)
+    )
 
-def load_VAE(vae_path, num_gene, hidden_dim):
+    return np.log(expression_matrix + 1.0 / (2 * phi_hat[0]))
+
+
+def load_VAE(vae_path, num_gene, hidden_dim, device="cuda"):
     autoencoder = VAE(
         num_genes=num_gene,
-        device='cuda',
+        device=device,
         seed=0,
-        loss_ae='mse',
+        loss_ae="mse",
         hidden_dim=hidden_dim,
-        decoder_activation='ReLU',
+        decoder_activation="ReLU",
     )
     autoencoder.load_state_dict(torch.load(vae_path))
     return autoencoder
@@ -45,6 +52,8 @@ def load_data(
     train_vae=False,
     hidden_dim=128,
     train_split_only=False,
+    num_workers=1,
+    device=None,
 ):
     """
     For a dataset, create a generator over (cells, kwargs) pairs.
@@ -62,11 +71,14 @@ def load_data(
         train_vae=train_vae,
         hidden_dim=hidden_dim,
         train_split_only=train_split_only,
+        device=device,
     )
-    return dataset_to_loader(dataset=dataset, batch_size=batch_size, deterministic=deterministic)
+    return dataset_to_loader(
+        dataset=dataset, batch_size=batch_size, deterministic=deterministic, num_workers=num_workers
+    )
 
 
-def dataset_to_loader(*, dataset, batch_size, deterministic=False):
+def dataset_to_loader(*, dataset, batch_size, deterministic=False, num_workers=1):
     """
     Create a generator over (cells, kwargs) pairs from a CellDataset.
 
@@ -74,14 +86,14 @@ def dataset_to_loader(*, dataset, batch_size, deterministic=False):
     :param batch_size: the batch size of each returned pair.
     :param deterministic: if True, yield results in a deterministic order.
     """
-    if deterministic:
-        loader = DataLoader(
-            dataset, batch_size=batch_size, shuffle=False, num_workers=1, drop_last=True
-        )
-    else:
-        loader = DataLoader(
-            dataset, batch_size=batch_size, shuffle=True, num_workers=1, drop_last=True
-        )
+
+    loader = DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=not deterministic,
+        num_workers=num_workers,
+        drop_last=True,
+    )
     while True:
         yield from loader
 
@@ -93,6 +105,7 @@ def get_dataset(
     train_vae=False,
     hidden_dim=128,
     train_split_only=False,
+    device=None,
 ):
     """
     Get CellDataset.
@@ -120,7 +133,7 @@ def get_dataset(
     # selected_cells = (adata.obs['organ'] != 'mammary') | (adata.obs['celltype'] != 'B cell')
     # adata = adata[selected_cells, :]
 
-    classes = adata.obs['celltype'].values
+    classes = adata.obs["celltype"].values
     label_encoder = LabelEncoder()
     labels = classes
     label_encoder.fit(labels)
@@ -132,26 +145,25 @@ def get_dataset(
     cell_data = adata.X.toarray()
 
     # turn the gene expression into latent space. use this if training the diffusion backbone.
+    if not device:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
     if not train_vae:
         num_gene = cell_data.shape[1]
-        autoencoder = load_VAE(vae_path,num_gene,hidden_dim)
-        cell_data = autoencoder(torch.tensor(cell_data).cuda(),return_latent=True)
-        cell_data = cell_data.cpu().detach().numpy()
+        with th.no_grad():
+            autoencoder = load_VAE(vae_path, num_gene, hidden_dim, device=device)
+            cell_data = autoencoder(
+                torch.tensor(cell_data, dtype=torch.float32, device=device),
+                return_latent=True,
+            )
+            cell_data = cell_data.cpu().numpy()
 
-    dataset = CellDataset(
-        cell_data,
-        classes
-    )
+    dataset = CellDataset(cell_data, classes)
 
     return dataset
 
 
 class CellDataset(Dataset):
-    def __init__(
-        self,
-        cell_data,
-        class_name
-    ):
+    def __init__(self, cell_data, class_name):
         super().__init__()
         self.data = cell_data
         self.class_name = class_name
@@ -163,5 +175,5 @@ class CellDataset(Dataset):
         arr = self.data[idx]
         out_dict = {}
         if self.class_name is not None:
-            out_dict["y"] = np.array(self.class_name[idx], dtype=np.int64)
+            out_dict["y"] = torch.as_tensor(self.class_name[idx], dtype=torch.int64)
         return arr, out_dict
