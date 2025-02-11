@@ -175,5 +175,5 @@ class CellDataset(Dataset):
         arr = self.data[idx]
         out_dict = {}
         if self.class_name is not None:
-            out_dict["y"] = np.array(self.class_name[idx], dtype=np.int32)
+            out_dict["y"] = torch.as_tensor(self.class_name[idx], dtype=torch.int64)
         return arr, out_dict

@@ -36,6 +36,18 @@ def setup_dist():
         hostname = socket.gethostbyname(socket.getfqdn())
         # hostname = socket.getfqdn()
 
+    try:
+        etchosts_hostname = get_hostname_from_etc_hosts(comm)
+    except FileNotFoundError:
+        etchosts_hostname = None
+
+    if etchosts_hostname != hostname and etchosts_hostname is not None:
+        warnings.warn(
+            f"Hostname from /etc/hosts ({etchosts_hostname}) does not match hostname from socket ({hostname})",
+            RuntimeWarning,
+        )
+        hostname = etchosts_hostname
+
     os.environ["MASTER_ADDR"] = comm.bcast(hostname, root=0)
     # os.environ["MASTER_ADDR"] = "127.0.1.1"
     os.environ["RANK"] = str(comm.rank)
@@ -44,21 +56,24 @@ def setup_dist():
     port = comm.bcast(_find_free_port(), root=0)
     os.environ["MASTER_PORT"] = str(port)
 
-    try:
-        dist.init_process_group(backend=backend, init_method="env://")
-    except RuntimeError as e:
-        warnings.warn(f"Failed to initialize process group: {e}", RuntimeWarning)
-        print("Trying to directly read hosts file")
-        hostname = socket.getfqdn()
-        with open("/etc/hosts", "r") as f:
-            for line in f:
-                v, k = line.split()[:2]
-                if k == hostname:
-                    os.environ["MASTER_ADDR"] = comm.bcast(v, root=0)
-                    break
-        port = comm.bcast(_find_free_port(), root=0)
-        os.environ["MASTER_PORT"] = str(port)
-        dist.init_process_group(backend=backend, init_method="env://")
+    # try:
+    dist.init_process_group(backend=backend, init_method="env://")
+    # except RuntimeError as e:
+    #     warnings.warn(f"Failed to initialize process group: {e}", RuntimeWarning)
+    #     print("Trying to directly read hosts file")
+    #     get_hostname_from_etc_hosts(comm)
+    #     port = comm.bcast(_find_free_port(), root=0)
+    #     os.environ["MASTER_PORT"] = str(port)
+    #     dist.init_process_group(backend=backend, init_method="env://")
+
+
+def get_hostname_from_etc_hosts(comm):
+    hostname = socket.getfqdn()
+    with open("/etc/hosts", "r") as f:
+        for line in f:
+            v, k = line.split()[:2]
+            if k == hostname:
+                return comm.bcast(v, root=0)
 
 
 def dev():

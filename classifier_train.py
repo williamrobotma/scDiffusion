@@ -51,7 +51,7 @@ def main():
     num_class = np.unique(dataset.class_name).shape[0]
     data = dataset_to_loader(
         dataset=dataset,
-        batch_size=args["batch_size"],
+        batch_size=args.batch_size,
         num_workers=args.num_workers,
     )
 
@@ -271,6 +271,7 @@ def create_argparser():
     add_dict_to_argparser(parser, defaults)
 
     parser.add_argument("--train_split_only", action="store_true")
+    parser.add_argument("--device_ids", nargs="*", default=None)
     return parser
 
 def setup_seed(seed):
