@@ -32,12 +32,19 @@ def prepare_vae(args, state_dict=None):
     Instantiates autoencoder and dataset to run an experiment.
     """
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    if args["device"]:
+        device = args["device"]
+    else:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    device = torch.device(device)
 
     dataset = get_dataset(
         data_dir=args["data_dir"],
         train_vae=True,
         train_split_only=args["train_split_only"],
+        lsn=not args["nolsn"],
+        device=device,
     )
     num_genes = dataset[0][0].shape[0]
     datasets = dataset_to_loader(
@@ -153,6 +160,8 @@ def parse_arguments():
     parser.add_argument("--sweep_seeds", type=int, default=200)
     parser.add_argument("--train_split_only", action="store_true")
     parser.add_argument("--num_workers", type=int, default=1)
+    parser.add_argument("--device", default=None)
+    parser.add_argument("--nolsn", action="store_true")
     return dict(vars(parser.parse_args()))
 
 

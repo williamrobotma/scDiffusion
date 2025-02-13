@@ -47,6 +47,7 @@ def main():
         hidden_dim=args.latent_dim,
         train_split_only=args.train_split_only,
         device=device_ids[0],
+        lsn=not args.nolsn,
     )
     num_class = np.unique(dataset.class_name).shape[0]
     data = dataset_to_loader(
@@ -272,6 +273,7 @@ def create_argparser():
 
     parser.add_argument("--train_split_only", action="store_true")
     parser.add_argument("--device_ids", nargs="*", default=None)
+    parser.add_argument("--nolsn", action="store_true")
     return parser
 
 def setup_seed(seed):

@@ -42,6 +42,7 @@ def main():
         train_vae=False,
         device=device,
         train_split_only=args.train_split_only,
+        lsn=not args.nolsn,
     )
 
     logger.log("training...")
@@ -92,6 +93,7 @@ def create_argparser():
 
     parser.add_argument("--device_ids", nargs="*", default=None)
     parser.add_argument("--train_split_only", action="store_true")
+    parser.add_argument("--nolsn", action="store_true")
     return parser
 
 

@@ -52,6 +52,7 @@ def load_data(
     train_vae=False,
     hidden_dim=128,
     train_split_only=False,
+    lsn=True,
     num_workers=1,
     device=None,
 ):
@@ -71,6 +72,7 @@ def load_data(
         train_vae=train_vae,
         hidden_dim=hidden_dim,
         train_split_only=train_split_only,
+        lsn=lsn,
         device=device,
     )
     return dataset_to_loader(
@@ -105,6 +107,7 @@ def get_dataset(
     train_vae=False,
     hidden_dim=128,
     train_split_only=False,
+    lsn=True,
     device=None,
 ):
     """
@@ -122,9 +125,9 @@ def get_dataset(
     adata = sc.read_h5ad(data_dir)
 
     # preporcess the data. modify this part if use your own dataset. the gene expression must first norm1e4 then log1p
-    sc.pp.filter_genes(adata, min_cells=3)
-    sc.pp.filter_cells(adata, min_genes=10)
-    adata.var_names_make_unique()
+    # sc.pp.filter_genes(adata, min_cells=3)
+    # sc.pp.filter_cells(adata, min_genes=10)
+    # adata.var_names_make_unique()
 
     if train_split_only:
         adata = adata[adata.obs["split"] == "train"]
@@ -139,7 +142,9 @@ def get_dataset(
     label_encoder.fit(labels)
     classes = label_encoder.transform(labels)
 
-    sc.pp.normalize_total(adata, target_sum=1e4)
+    if lsn:
+        print("NORMALIZE TOTAL")
+        sc.pp.normalize_total(adata, target_sum=1e4)
     sc.pp.log1p(adata)
 
     cell_data = adata.X.toarray()

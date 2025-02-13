@@ -1,7 +1,7 @@
 """Generates samples with same classes as h5ad, replacing values."""
 
 # %%
-import pickle
+import argparse
 import sys
 from unittest.mock import patch
 
@@ -14,17 +14,32 @@ import classifier_sample
 from VAE.VAE_model import VAE
 
 # %%
-NAME = "zeng23_hvg"
-BATCH_SIZE = 1024
-DEVICE_ID = "cuda:1"
+parser = argparse.ArgumentParser(
+    description="Generates samples with same classes as h5ad, replacing values."
+)
+# parser.add_argument("--model_name", type=str, help="Name of the dataset.")
+parser.add_argument("--batch_size", type=int, default=1024, help="Batch size.")
+parser.add_argument("--device", default=None, help="Device")
+parser.add_argument("--data_dir", type=str, help="Path to h5ad file.")
+# parser.add_argument("--umap_path", type=str, help="Path to UMAP pickle.")
+parser.add_argument("--model_path", type=str, help="Path to model checkpoint.")
+parser.add_argument("--classifier_path", type=str, help="Path to classifier checkpoint.")
+parser.add_argument("--vae_path", type=str, help="Path to VAE checkpoint.")
+parser.add_argument("--sample_dir", type=str, help="Path to save samples.")
 
-DATA_DIR = f"../diffusion-scratch/data/processed/zeng23/{NAME}.h5ad"
-UMAP_PATH = f"../diffusion-scratch/data/processed/zeng23/umap_hvg.pkl"
+args = parser.parse_args()
 
-MODEL_PATH = f"output/checkpoint/backbone/{NAME}/model800000.pt"
-CLASSIFIER_PATH = f"output/checkpoint/classifier/{NAME}/model200000.pt"
-VAE_PATH = f"output/checkpoint/AE/{NAME}/model_seed=0_step=150000.pt"
-SAMPLE_DIR = f"output/{NAME}/bm"
+# NAME = args.model_name
+BATCH_SIZE = args.batch_size
+DEVICE_ID = args.device
+
+DATA_DIR = args.data_dir
+# UMAP_PATH = f"../diffusion-scratch/data/processed/zeng23/umap_hvg.pkl"
+
+MODEL_PATH = args.model_path
+CLASSIFIER_PATH = args.classifier_path
+VAE_PATH = args.vae_path
+SAMPLE_DIR = args.sample_dir
 
 
 # %%
