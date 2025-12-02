@@ -69,6 +69,7 @@ def create_model_and_diffusion(
         hidden_dim,
         dropout=dropout
     )
+    print(model)
     diffusion = create_gaussian_diffusion(
         steps=diffusion_steps,
         learn_sigma=learn_sigma,
@@ -79,6 +80,7 @@ def create_model_and_diffusion(
         rescale_learned_sigmas=rescale_learned_sigmas,
         timestep_respacing=timestep_respacing,
     )
+    print(diffusion)
     return model, diffusion
 
 
@@ -117,6 +119,7 @@ def create_classifier_and_diffusion(
         dropout=dropout,
         num_class=num_class
     )
+    print(classifier)
     diffusion = create_gaussian_diffusion(
         steps=diffusion_steps,
         learn_sigma=learn_sigma,
@@ -127,6 +130,7 @@ def create_classifier_and_diffusion(
         rescale_learned_sigmas=rescale_learned_sigmas,
         timestep_respacing=timestep_respacing,
     )
+    print(diffusion)
     return classifier, diffusion
 
 

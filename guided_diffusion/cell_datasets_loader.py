@@ -31,6 +31,7 @@ def stabilize(expression_matrix):
 
 
 def load_VAE(vae_path, num_gene, hidden_dim, device="cuda"):
+    print("Loading VAE for training")
     autoencoder = VAE(
         num_genes=num_gene,
         device=device,
@@ -40,6 +41,7 @@ def load_VAE(vae_path, num_gene, hidden_dim, device="cuda"):
         decoder_activation="ReLU",
     )
     autoencoder.load_state_dict(torch.load(vae_path))
+    print(autoencoder)
     return autoencoder
 
 
@@ -121,8 +123,10 @@ def get_dataset(
 
     if not data_dir:
         raise ValueError("unspecified data directory")
-
+    
+    print("Reading h5ad from", data_dir)
     adata = sc.read_h5ad(data_dir)
+    print(adata)
 
     # preporcess the data. modify this part if use your own dataset. the gene expression must first norm1e4 then log1p
     # sc.pp.filter_genes(adata, min_cells=3)
@@ -130,7 +134,9 @@ def get_dataset(
     # adata.var_names_make_unique()
 
     if train_split_only:
+        print("Getting training subset")
         adata = adata[adata.obs["split"] == "train"]
+        print(adata)
 
     # if generate ood data, left this as the ood data
     # selected_cells = (adata.obs['organ'] != 'mammary') | (adata.obs['celltype'] != 'B cell')
@@ -142,9 +148,11 @@ def get_dataset(
     label_encoder.fit(labels)
     classes = label_encoder.transform(labels)
 
+    print(adata.X[:10].toarray().sum(axis=1))
     if lsn:
         print("NORMALIZE TOTAL")
         sc.pp.normalize_total(adata, target_sum=1e4)
+        print(adata.X[:10].toarray().sum(axis=1))
     sc.pp.log1p(adata)
 
     cell_data = adata.X.toarray()
@@ -154,13 +162,18 @@ def get_dataset(
         device = "cuda" if torch.cuda.is_available() else "cpu"
     if not train_vae:
         num_gene = cell_data.shape[1]
+        print("Transforming  data to latent")
         with th.no_grad():
+            print("Loading VAE from", vae_path)
             autoencoder = load_VAE(vae_path, num_gene, hidden_dim, device=device)
+            print(autoencoder)
+            print("Transforming data")
             cell_data = autoencoder(
                 torch.tensor(cell_data, dtype=torch.float32, device=device),
                 return_latent=True,
             )
             cell_data = cell_data.cpu().numpy()
+            print(cell_data)
 
     dataset = CellDataset(cell_data, classes)
 

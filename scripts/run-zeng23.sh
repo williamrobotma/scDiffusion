@@ -5,7 +5,7 @@ set -x
 
 DATA_NAME="zeng23_full"
 # DATA_NAME="zeng23_hvg"
-CUDA_INDEX=0
+CUDA_INDEX=2
 MODEL_NAME="zeng23_full"
 NO_LSN=false
 NO_LSN_FLAG=""
@@ -30,6 +30,9 @@ done
 if [ "$NO_LSN" = true ]; then
     MODEL_NAME="${DATA_NAME}_nolsn"
     NO_LSN_FLAG="--nolsn"
+else
+    MODEL_NAME=$DATA_NAME
+    NO_LSN_FLAG=""
 fi
 
 if [ ! -d "output/pretrained/annotation_model_v1" ]; then

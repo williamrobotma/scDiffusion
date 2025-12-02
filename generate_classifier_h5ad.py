@@ -58,12 +58,14 @@ def get_h5ad_classes(data_dir):
     if not data_dir:
         raise ValueError("unspecified data directory")
 
+    print("Reading h5ad from", data_dir)
     adata = sc.read_h5ad(data_dir)
+    print(adata)
 
     # preporcess the data. modify this part if use your own dataset. the gene expression must first norm1e4 then log1p
-    sc.pp.filter_genes(adata, min_cells=3)
-    sc.pp.filter_cells(adata, min_genes=10)
-    adata.var_names_make_unique()
+    # sc.pp.filter_genes(adata, min_cells=3)
+    # sc.pp.filter_cells(adata, min_genes=10)
+    # adata.var_names_make_unique()
 
     classes = adata.obs["celltype"].values
     label_encoder = LabelEncoder()
@@ -85,7 +87,7 @@ def gen_samples(c, n_samples, n_classes):
     args += f" --device_ids {DEVICE_ID}"
     args += f" --num_class {n_classes}"
     args = args.split()
-
+    print(args)
     with patch.object(sys, "argv", args):
         classifier_sample.main([c])
 
@@ -94,6 +96,7 @@ def gen_samples(c, n_samples, n_classes):
 
 
 def load_VAE(num_genes, device="cuda"):
+    print("loading VAE from", VAE_PATH)
     autoencoder = VAE(
         num_genes=num_genes,
         device=device,
@@ -103,6 +106,7 @@ def load_VAE(num_genes, device="cuda"):
         decoder_activation="ReLU",
     )
     autoencoder.load_state_dict(torch.load(VAE_PATH))
+    print(autoencoder)
     return autoencoder
 
 

@@ -60,6 +60,7 @@ def main(cell_type=[0], multi=False, inter=False, weight=[10,10]):
     model, diffusion = create_model_and_diffusion(
         **args_to_dict(args, model_and_diffusion_defaults().keys())
     )
+    print("loading model at", args.model_path)
     model.load_state_dict(
         dist_util.load_state_dict(args.model_path, map_location="cpu")
     )
@@ -92,11 +93,13 @@ def main(cell_type=[0], multi=False, inter=False, weight=[10,10]):
 
     else:
         classifier = create_classifier(**args_to_dict(args, (['num_class']+list(classifier_and_diffusion_defaults().keys()))[:3]))
+        print("Loading from", args.classifier_path)
         classifier.load_state_dict(
             dist_util.load_state_dict(args.classifier_path, map_location="cpu")
         )
         classifier.to(device)
         classifier.eval()
+        print(classifier)
 
     '''
     control function for Gradient Interpolation Strategy

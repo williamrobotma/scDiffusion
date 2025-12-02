@@ -31,6 +31,7 @@ def prepare_vae(args, state_dict=None):
     """
     Instantiates autoencoder and dataset to run an experiment.
     """
+    print("Loading VAE and Data")
 
     if args["device"]:
         device = args["device"]
@@ -39,6 +40,7 @@ def prepare_vae(args, state_dict=None):
 
     device = torch.device(device)
 
+    print("Loading data")
     dataset = get_dataset(
         data_dir=args["data_dir"],
         train_vae=True,
@@ -53,6 +55,7 @@ def prepare_vae(args, state_dict=None):
         num_workers=args["num_workers"],
     )
 
+    print("Creating VAE")
     autoencoder = VAE(
         num_genes,
         device=device,
@@ -67,6 +70,7 @@ def prepare_vae(args, state_dict=None):
         autoencoder.encoder.load_state(state_dict["encoder"], use_gpu)
         autoencoder.decoder.load_state(state_dict["decoder"], use_gpu)
 
+    print(autoencoder)
     return autoencoder, datasets
 
 
